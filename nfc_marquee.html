@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFC 感應跑馬燈</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1b1e26;
+    --accent: #4fd1c5;
+    --text: #f5f5f5;
+    --muted: #9aa0ab;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang TC", "Microsoft JhengHei", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 8px 0 4px;
+    text-align: center;
+  }
+  p.sub {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    margin: 0 0 20px;
+    max-width: 420px;
+    line-height: 1.6;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  }
+  button {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    background: var(--accent);
+    color: #08221f;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+  }
+  #status {
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+    min-height: 18px;
+  }
+  #status.error { color: var(--danger); }
+  #status.ok { color: var(--accent); }
+
+  .marquee-wrap {
+    margin-top: 20px;
+    width: 100%;
+    overflow: hidden;
+    background: #05070a;
+    border: 1px solid #2a2e38;
+    border-radius: 10px;
+    padding: 14px 0;
+    display: none;
+  }
+  .marquee-track {
+    display: inline-block;
+    white-space: nowrap;
+    padding-left: 100%;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    animation: scroll-left 10s linear infinite;
+  }
+  @keyframes scroll-left {
+    0%   { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+
+  .detail {
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--muted);
+    word-break: break-all;
+    line-height: 1.6;
+  }
+  .detail b { color: var(--text); }
+</style>
+</head>
+<body>
+
+  <h1>📶 NFC 感應跑馬燈</h1>
+  <p class="sub">
+    僅支援 Android 手機 + Chrome 瀏覽器,且此頁面須以 HTTPS 開啟。
+    請按下方按鈕開始感應,再將手機背面靠近 Mifare 卡片。
+  </p>
+
+  <div class="card">
+    <button id="startBtn">開始感應</button>
+    <div id="status">尚未開始</div>
+
+    <div class="marquee-wrap" id="marqueeWrap">
+      <span class="marquee-track" id="marqueeText"></span>
+    </div>
+
+    <div class="detail" id="detail"></div>
+  </div>
+
+<script>
+  const startBtn = document.getElementById('startBtn');
+  const statusEl = document.getElementById('status');
+  const marqueeWrap = document.getElementById('marqueeWrap');
+  const marqueeText = document.getElementById('marqueeText');
+  const detailEl = document.getElementById('detail');
+
+  function setStatus(msg, type) {
+    statusEl.textContent = msg;
+    statusEl.className = type || '';
+  }
+
+  function showMarquee(text) {
+    marqueeText.textContent = text;
+    marqueeWrap.style.display = 'block';
+    // 重新觸發動畫,讓每次感應都從頭跑
+    marqueeText.style.animation = 'none';
+    // 強制 reflow
+    void marqueeText.offsetWidth;
+    marqueeText.style.animation = '';
+  }
+
+  function decodeNdefRecords(records) {
+    const texts = [];
+    for (const record of records) {
+      try {
+        if (record.recordType === 'text') {
+          const decoder = new TextDecoder(record.encoding || 'utf-8');
+          texts.push(decoder.decode(record.data));
+        } else if (record.recordType === 'url') {
+          const decoder = new TextDecoder();
+          texts.push(decoder.decode(record.data));
+        }
+      } catch (e) {
+        // 忽略無法解析的record
+      }
+    }
+    return texts;
+  }
+
+  async function startScan() {
+    if (!('NDEFReader' in window)) {
+      setStatus('此瀏覽器不支援 Web NFC(請用 Android 上的 Chrome,並確認網址為 HTTPS)', 'error');
+      return;
+    }
+
+    try {
+      const ndef = new NDEFReader();
+      await ndef.scan();
+      setStatus('感應中… 請將手機靠近 Mifare 卡片', 'ok');
+      startBtn.disabled = true;
+      startBtn.textContent = '感應中…';
+
+      ndef.onreading = (event) => {
+        const uid = event.serialNumber || '(無法取得卡號)';
+        const texts = decodeNdefRecords(event.message.records);
+
+        let displayText;
+        if (texts.length > 0) {
+          displayText = texts.join('　★　');
+        } else {
+          displayText = `卡片感應成功！UID: ${uid}`;
+        }
+
+        showMarquee(displayText);
+        detailEl.innerHTML =
+          `<b>卡號 (UID):</b> ${uid}<br>` +
+          `<b>NDEF 內容筆數:</b> ${event.message.records.length}<br>` +
+          `<b>感應時間:</b> ${new Date().toLocaleString('zh-TW')}`;
+
+        setStatus('感應成功,可再次感應', 'ok');
+      };
+
+      ndef.onreadingerror = () => {
+        setStatus('讀取卡片時發生錯誤,請再試一次(部分 Mifare Classic 卡片有金鑰保護,只能讀到卡號）', 'error');
+      };
+
+    } catch (err) {
+      setStatus('啟動 NFC 失敗:' + err.message + '（請確認手機 NFC 已開啟，且已允許此網站使用 NFC）', 'error');
+      startBtn.disabled = false;
+      startBtn.textContent = '開始感應';
+    }
+  }
+
+  startBtn.addEventListener('click', startScan);
+</script>
+
+</body>
+</html>
